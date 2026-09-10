@@ -22,7 +22,7 @@ Crystal Hollow Route Checker (CHRC) is a client-side route checker that imports 
 - `/chrc start` starts a fresh route check if at least one waypoint exists.
 - `/chrc stop` manually stops the active check and hides the unscanned HUD.
 - A normal Minecraft Controls keybind named **Toggle Route Check** is registered under **CHRC** and defaults to **Not Bound**.
-- Default scan radius is **4**, producing a 9×9×9 cube.
+- Default scan radius is **3**, producing a 7×7×7 cube.
 - The scan cube is centered at **(waypoint X, waypoint Y + 2, waypoint Z)**.
 - Waypoints are scanned strictly in route order: #1, then #2, then #3, etc.
 - CHRC never creates the scan cube for the next waypoint until the current waypoint's chunk is loaded.
@@ -38,8 +38,36 @@ Requires Java 25.
 gradlew.bat clean build
 ```
 
-## Usage Guide
+## Keybind crash fix
 
-1. Import waypoints from Skyblocker and number them in route order.
-2. Type `/chrc start`.
-3. Move closer to the waypoint currently being displayed.
+- Registers the CHRC key mapping eagerly from `CHRCClient.onInitializeClient()` instead of relying on lazy static class initialization from the first client tick.
+- Keeps the default toggle key as **Not Bound**.
+- Prevents `IllegalStateException: GameOptions has already been initialised` on Minecraft 26.1.2 / Fabric.
+
+## Waypoint renderer access fix
+
+- Fixes `IllegalAccessException` when CHRC registers its Skyblocker render callback on Java 25.
+- The previous code reflected `register()` from Fabric's package-private `ArrayBackedEvent` implementation.
+- CHRC now resolves `register()` from Fabric's public `Event` API class, so the waypoint renderer can hook before `/chrc start`.
+
+## Waypoint marker fix
+- Creates/synchronizes waypoint #1 immediately when a scan starts.
+- Uses Skyblocker's real `NamedWaypoint` renderer at runtime instead of duplicating primitive calls.
+- Keeps exactly one through-walls marker and only replaces it when the first unscanned route entry changes.
+- Render target is synced before scanner progress each client tick, preventing waypoint #1 from being skipped visually when it is already loaded.
+- Prints a visible CHRC warning and console error if the optional Skyblocker rendering hook cannot be established.
+
+
+
+
+## Structure check
+
+- CHRC scans structure blocks with the same cube-style logic used for gemstone scanning.
+- Structure scan radius is configurable in `/chrc` → **General**, from **1 to 10 blocks**.
+- Default structure scan radius is **6 blocks**, producing a **13 x 13 x 13** cube.
+- The structure cube uses the same **waypoint Y + 2** scan center.
+- CHRC waits until every chunk touched by this structure cube is loaded before scanning it.
+- If any configured structure block is found, the waypoint is forced to **FALSE**.
+- Each detected structure block and its coordinates are written to the Minecraft console / `latest.log`.
+- The exact original waypoint block is skipped so a player-placed Etherwarp cobblestone does not invalidate the waypoint by itself.
+- Gemstone scanning and route-order gemstone ignore logic still run normally.

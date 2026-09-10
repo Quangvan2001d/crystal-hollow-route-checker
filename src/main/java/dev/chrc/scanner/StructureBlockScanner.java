@@ -14,13 +14,11 @@ import net.minecraft.world.level.block.state.BlockState;
  * Structure guard for route waypoints.
  *
  * Structure blocks are scanned with the same cube algorithm as gemstones,
- * centered at waypoint Y + 2, but with a fixed structure radius of 6 blocks.
+ * centered at waypoint Y + 2, with a configurable structure radius.
  * The original waypoint block itself is skipped because route waypoints are
  * commonly placed on a player-created cobblestone Etherwarp landing block.
  */
 public final class StructureBlockScanner {
-    public static final int STRUCTURE_SCAN_RADIUS = 6;
-
     /**
      * Centralized Crystal Hollows structure palette so it can be adjusted
      * without touching route/scan state logic.

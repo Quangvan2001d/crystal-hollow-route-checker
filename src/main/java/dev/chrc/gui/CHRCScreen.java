@@ -95,12 +95,20 @@ public final class CHRCScreen extends Screen {
 
         addRenderableOnly((graphics, mouseX, mouseY, delta) -> {
             graphics.text(font, Component.literal("General").withStyle(ChatFormatting.BOLD), contentLeft, top, CommonColors.WHITE);
+
             int radius = ConfigManager.get().scanRadius;
             long side = radius * 2L + 1L;
             long volume = side * side * side;
-            graphics.text(font, Component.literal("Scan radius (cube centered at waypoint Y + 2)"), contentLeft, top + 42, CommonColors.LIGHT_GRAY);
-            graphics.text(font, Component.literal("Scan area: " + side + " × " + side + " × " + side + " = " + volume + " blocks"), contentLeft, top + 70, CommonColors.GRAY);
-            graphics.text(font, Component.literal("Strict order: #1 → #2 → #3. Earlier gemstone blocks are ignored later."), contentLeft, top + 94, CommonColors.GRAY);
+            graphics.text(font, Component.literal("Gemstone scan radius (cube centered at waypoint Y + 2)"), contentLeft, top + 42, CommonColors.LIGHT_GRAY);
+            graphics.text(font, Component.literal("Gemstone area: " + side + " × " + side + " × " + side + " = " + volume + " blocks"), contentLeft + 82, top + 58, CommonColors.GRAY);
+
+            int structureRadius = ConfigManager.get().structureScanRadius;
+            long structureSide = structureRadius * 2L + 1L;
+            long structureVolume = structureSide * structureSide * structureSide;
+            graphics.text(font, Component.literal("Structure scan radius (1–10 blocks)"), contentLeft, top + 88, CommonColors.LIGHT_GRAY);
+            graphics.text(font, Component.literal("Structure area: " + structureSide + " × " + structureSide + " × " + structureSide + " = " + structureVolume + " blocks"), contentLeft + 82, top + 104, CommonColors.GRAY);
+
+            graphics.text(font, Component.literal("Strict order: #1 → #2 → #3. Earlier gemstone blocks are ignored later."), contentLeft, top + 136, CommonColors.GRAY);
         });
 
         addRenderableWidget(Checkbox.builder(Component.literal("Enable CHRC"), font)
@@ -112,12 +120,9 @@ public final class CHRCScreen extends Screen {
                 .pos(contentLeft, top + 18)
                 .build());
 
-        EditBox radius = new EditBox(font, 70, 20, Component.literal("Scan Radius"));
+        EditBox radius = new EditBox(font, 70, 20, Component.literal("Gemstone Scan Radius"));
         radius.setPosition(contentLeft, top + 54);
         radius.setValue(Integer.toString(ConfigManager.get().scanRadius));
-        // Minecraft 26.1.2's vanilla EditBox does not expose setFilter().
-        // Validate in the responder instead and restore the last valid value
-        // when the user enters an invalid radius.
         final boolean[] restoringRadius = {false};
         radius.setResponder(value -> {
             if (restoringRadius[0] || value.isEmpty()) return;
@@ -139,6 +144,31 @@ public final class CHRCScreen extends Screen {
             }
         });
         addRenderableWidget(radius);
+
+        EditBox structureRadius = new EditBox(font, 70, 20, Component.literal("Structure Scan Radius"));
+        structureRadius.setPosition(contentLeft, top + 100);
+        structureRadius.setValue(Integer.toString(ConfigManager.get().structureScanRadius));
+        final boolean[] restoringStructureRadius = {false};
+        structureRadius.setResponder(value -> {
+            if (restoringStructureRadius[0] || value.isEmpty()) return;
+
+            if (!isIntegerInRange(value, 1, 10)) {
+                restoringStructureRadius[0] = true;
+                String validValue = Integer.toString(ConfigManager.get().structureScanRadius);
+                structureRadius.setValue(validValue);
+                structureRadius.setCursorPosition(validValue.length());
+                restoringStructureRadius[0] = false;
+                return;
+            }
+
+            int parsed = Integer.parseInt(value);
+            if (parsed != ConfigManager.get().structureScanRadius) {
+                ConfigManager.get().structureScanRadius = parsed;
+                ConfigManager.save();
+                ScanManager.reset();
+            }
+        });
+        addRenderableWidget(structureRadius);
     }
 
     private void initGemstones(int left, int panelWidth) {

@@ -115,14 +115,14 @@ public final class ScanManager {
         }
 
         // Structure scanning uses the same cube-style traversal as gemstone
-        // scanning, but with its own fixed 6-block radius. Create this cube only
+        // scanning, with its own configurable 1-10 block radius. Create this cube only
         // after the waypoint itself is loaded, and wait until every touched
         // chunk is available before reading any structure block from it.
         GemstoneScanner.ScanArea structureArea = STRUCTURE_SCAN_AREAS.get(waypoint.id);
         if (structureArea == null) {
             structureArea = GemstoneScanner.createScanArea(
                     waypoint,
-                    StructureBlockScanner.STRUCTURE_SCAN_RADIUS
+                    ConfigManager.get().structureScanRadius
             );
             STRUCTURE_SCAN_AREAS.put(waypoint.id, structureArea);
         }
