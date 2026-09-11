@@ -8,7 +8,10 @@ import java.util.List;
 public final class ChrcConfig {
     public boolean enabled = true;
     public int scanRadius = 3;
-    public int structureScanRadius = 2;
+    public int structureScanRadius = 6;
+
+    // Detached-camera movement speed in blocks per client tick.
+    public float freecamSpeed = 0.45f;
     public List<GemstoneType> selectedGemstones = new ArrayList<>(List.of(GemstoneType.RUBY));
 
     // In-game table that shows route waypoints whose center chunk is not loaded yet.
@@ -22,6 +25,8 @@ public final class ChrcConfig {
     public void normalize() {
         scanRadius = Math.clamp(scanRadius, 0, 32);
         structureScanRadius = Math.clamp(structureScanRadius, 1, 10);
+        if (!Float.isFinite(freecamSpeed)) freecamSpeed = 0.45f;
+        freecamSpeed = Math.clamp(freecamSpeed, 0.05f, 5.0f);
         if (selectedGemstones == null) selectedGemstones = new ArrayList<>();
         selectedGemstones = new ArrayList<>(new LinkedHashSet<>(selectedGemstones));
         if (selectedGemstones.isEmpty()) selectedGemstones.add(GemstoneType.RUBY);

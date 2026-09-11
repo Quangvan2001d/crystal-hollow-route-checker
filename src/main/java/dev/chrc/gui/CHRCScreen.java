@@ -68,6 +68,7 @@ public final class CHRCScreen extends Screen {
             case GEMSTONES -> initGemstones(left, panelWidth);
             case ROUTE -> initRoute(left, panelWidth);
             case HUD -> initHud(left, panelWidth);
+            case FREECAM -> initFreecam(left, panelWidth);
             case RESULTS -> initResults(left, panelWidth);
         }
 
@@ -351,6 +352,67 @@ public final class CHRCScreen extends Screen {
         }
     }
 
+
+    private void initFreecam(int left, int panelWidth) {
+        int contentLeft = left + 22;
+        int top = HEADER_HEIGHT + 18;
+
+        addRenderableOnly((graphics, mouseX, mouseY, delta) -> {
+            graphics.text(font, Component.literal("Freecam").withStyle(ChatFormatting.BOLD), contentLeft, top, CommonColors.WHITE);
+            graphics.text(font, Component.literal("Detached-camera movement settings."), contentLeft, top + 18, CommonColors.GRAY);
+            graphics.text(font, Component.literal("Base flight speed (blocks/tick)"), contentLeft, top + 54, CommonColors.LIGHT_GRAY);
+            graphics.text(font, Component.literal("Allowed range: 0.05 – 5.00"), contentLeft + 118, top + 78, CommonColors.GRAY);
+            graphics.text(font, Component.literal("Holding Sprint doubles the configured speed."), contentLeft, top + 112, CommonColors.GRAY);
+            graphics.text(font, Component.literal("The Toggle Freecam key can be changed in Minecraft Options → Controls → Key Binds → CHRC."), contentLeft, top + 136, CommonColors.GRAY);
+        });
+
+        EditBox speed = new EditBox(font, 100, 20, Component.literal("Freecam Speed"));
+        speed.setPosition(contentLeft, top + 72);
+        speed.setValue(formatFreecamSpeed(ConfigManager.get().freecamSpeed));
+        final float[] lastValid = {ConfigManager.get().freecamSpeed};
+        final boolean[] restoring = {false};
+        speed.setResponder(value -> {
+            if (restoring[0] || value == null || value.isEmpty() || value.equals(".") || value.equals("0.")) return;
+
+            // Permit only a simple positive decimal while the user is typing.
+            if (!value.matches("\\d*(?:\\.\\d*)?")) {
+                restoring[0] = true;
+                String validValue = formatFreecamSpeed(lastValid[0]);
+                speed.setValue(validValue);
+                speed.setCursorPosition(validValue.length());
+                restoring[0] = false;
+                return;
+            }
+
+            try {
+                float parsed = Float.parseFloat(value);
+                if (!Float.isFinite(parsed) || parsed < 0.05f || parsed > 5.0f) return;
+                lastValid[0] = parsed;
+                ConfigManager.get().freecamSpeed = parsed;
+                ConfigManager.save();
+            } catch (NumberFormatException ignored) {
+                // Intermediate edit state; keep the last valid saved value.
+            }
+        });
+        addRenderableWidget(speed);
+
+        addRenderableWidget(Button.builder(Component.literal("Reset to 0.45"), button -> {
+                    ConfigManager.get().freecamSpeed = 0.45f;
+                    ConfigManager.save();
+                    statusMessage = "Freecam speed reset to 0.45 blocks/tick.";
+                    statusColor = CommonColors.LIGHT_GRAY;
+                    rebuildWidgets();
+                })
+                .pos(contentLeft + 118, top + 72).size(110, 20).build());
+    }
+
+    private static String formatFreecamSpeed(float value) {
+        String text = String.format(java.util.Locale.ROOT, "%.2f", value);
+        while (text.contains(".") && text.endsWith("0")) text = text.substring(0, text.length() - 1);
+        if (text.endsWith(".")) text = text.substring(0, text.length() - 1);
+        return text;
+    }
+
     private void initResults(int left, int panelWidth) {
         int contentLeft = left + 18;
         int top = HEADER_HEIGHT + 14;
@@ -420,6 +482,7 @@ public final class CHRCScreen extends Screen {
         GEMSTONES("Gemstones"),
         ROUTE("Route"),
         HUD("HUD"),
+        FREECAM("Freecam"),
         RESULTS("Results");
 
         private final String label;

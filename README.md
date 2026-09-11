@@ -1,20 +1,3 @@
-# CHRC 1.0.0 — Minecraft 26.1.2 / Fabric
-
-## Usage Guide
-
-1. Import waypoints from Skyblocker and number them in route order.
-2. Type `/chrc start`.
-3. Move closer to the waypoint currently being displayed.
-
-## 1.0 current-target waypoint
-
-- Author metadata: `quangvan`.
-- While a route check is running, CHRC renders exactly one world waypoint: the first route entry whose `scanned` flag is still false.
-- The marker is kept as the same runtime object while the pending route entry is unchanged; each client tick only checks whether the pending entry changed.
-- After that waypoint completes its scan, the marker advances to the next unscanned route entry.
-- Rendering uses Skyblocker's primitive collector when Skyblocker is installed: filled box + outline + beacon-style marker + name, with through-walls rendering enabled.
-- If Skyblocker's render API is unavailable, scanning/HUD/commands continue to work and only the world marker is skipped.
-
 Crystal Hollow Route Checker (CHRC) is a client-side route checker that imports Skyblocker waypoint data and scans loaded client block data for selected gemstones.
 
 ## Main behavior
@@ -45,4 +28,3 @@ gradlew.bat clean build
 2. Run `/chrc start`.
 3. Move close to each waypoint location.
 4. CHRC will check whether your waypoint is affected by or overlaps with a structure.
-

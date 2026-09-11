@@ -1,4 +1,6 @@
 {
   "key.category.chrc.main": "CHRC",
-  "key.chrc.toggle": "Toggle Route Check"
+  "key.chrc.toggle": "Toggle Route Check",
+  "key.chrc.freecam": "Toggle Freecam",
+  "key.chrc.waypoints": "Toggle All Waypoints"
 }

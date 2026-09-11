@@ -1,0 +1,18 @@
+{
+  "required": true,
+  "package": "dev.chrc.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "AccessorKeyMapping",
+    "AccessorWindow",
+    "FreecamEntityTurnMixin",
+    "FreecamKeyboardInputMixin",
+    "FreecamLocalPlayerMixin",
+    "FreecamMouseHandlerMixin",
+    "FreecamMinecraftInteractionMixin",
+    "FreecamGameRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

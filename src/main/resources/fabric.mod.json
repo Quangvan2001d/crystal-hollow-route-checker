@@ -6,14 +6,17 @@
   "description": "Client-side Crystal Hollows gemstone route checker with Skyblocker waypoint import.",
   "authors": ["quangvan"],
   "environment": "client",
+  "mixins": [
+    "chrc.mixins.json"
+  ],
   "entrypoints": {
     "client": [
       "dev.chrc.CHRCClient"
     ]
   },
   "depends": {
-    "fabricloader": ">=0.19.1",
-    "fabric-api": ">=0.145.3+26.1.1",
+    "fabricloader": ">=0.19.3",
+    "fabric-api": ">=0.152.1+26.1.2",
     "minecraft": "~26.1",
     "java": ">=25"
   }
