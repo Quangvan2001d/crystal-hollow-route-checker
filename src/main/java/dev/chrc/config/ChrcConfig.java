@@ -8,7 +8,7 @@ import java.util.List;
 public final class ChrcConfig {
     public boolean enabled = true;
     public int scanRadius = 3;
-    public int structureScanRadius = 6;
+    public int structureScanRadius = 2;
     public List<GemstoneType> selectedGemstones = new ArrayList<>(List.of(GemstoneType.RUBY));
 
     // In-game table that shows route waypoints whose center chunk is not loaded yet.
