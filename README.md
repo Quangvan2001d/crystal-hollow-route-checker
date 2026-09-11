@@ -38,36 +38,11 @@ Requires Java 25.
 gradlew.bat clean build
 ```
 
-## Keybind crash fix
+## Guide
 
-- Registers the CHRC key mapping eagerly from `CHRCClient.onInitializeClient()` instead of relying on lazy static class initialization from the first client tick.
-- Keeps the default toggle key as **Not Bound**.
-- Prevents `IllegalStateException: GameOptions has already been initialised` on Minecraft 26.1.2 / Fabric.
+1. Use `/chrc` to import your waypoints.
+   Make sure to number the waypoints in the correct order.
+2. Run `/chrc start`.
+3. Move close to each waypoint location.
+4. CHRC will check whether your waypoint is affected by or overlaps with a structure.
 
-## Waypoint renderer access fix
-
-- Fixes `IllegalAccessException` when CHRC registers its Skyblocker render callback on Java 25.
-- The previous code reflected `register()` from Fabric's package-private `ArrayBackedEvent` implementation.
-- CHRC now resolves `register()` from Fabric's public `Event` API class, so the waypoint renderer can hook before `/chrc start`.
-
-## Waypoint marker fix
-- Creates/synchronizes waypoint #1 immediately when a scan starts.
-- Uses Skyblocker's real `NamedWaypoint` renderer at runtime instead of duplicating primitive calls.
-- Keeps exactly one through-walls marker and only replaces it when the first unscanned route entry changes.
-- Render target is synced before scanner progress each client tick, preventing waypoint #1 from being skipped visually when it is already loaded.
-- Prints a visible CHRC warning and console error if the optional Skyblocker rendering hook cannot be established.
-
-
-
-
-## Structure check
-
-- CHRC scans structure blocks with the same cube-style logic used for gemstone scanning.
-- Structure scan radius is configurable in `/chrc` → **General**, from **1 to 10 blocks**.
-- Default structure scan radius is **6 blocks**, producing a **13 x 13 x 13** cube.
-- The structure cube uses the same **waypoint Y + 2** scan center.
-- CHRC waits until every chunk touched by this structure cube is loaded before scanning it.
-- If any configured structure block is found, the waypoint is forced to **FALSE**.
-- Each detected structure block and its coordinates are written to the Minecraft console / `latest.log`.
-- The exact original waypoint block is skipped so a player-placed Etherwarp cobblestone does not invalidate the waypoint by itself.
-- Gemstone scanning and route-order gemstone ignore logic still run normally.
