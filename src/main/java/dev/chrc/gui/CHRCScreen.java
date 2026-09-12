@@ -1,5 +1,7 @@
 package dev.chrc.gui;
 
+import com.mojang.blaze3d.platform.InputConstants;
+import dev.chrc.automation.GoblinKnockbackManager;
 import dev.chrc.config.ConfigManager;
 import dev.chrc.route.ChrcRoute;
 import dev.chrc.route.RouteManager;
@@ -8,6 +10,7 @@ import dev.chrc.scanner.GemstoneType;
 import dev.chrc.scanner.ScanManager;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Checkbox;
 import net.minecraft.client.gui.components.EditBox;
@@ -15,6 +18,7 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.CommonColors;
+import org.lwjgl.glfw.GLFW;
 
 public final class CHRCScreen extends Screen {
     private static final int PANEL_MAX_WIDTH = 640;
@@ -25,6 +29,7 @@ public final class CHRCScreen extends Screen {
     private Tab activeTab = Tab.GENERAL;
     private String statusMessage = "";
     private int statusColor = CommonColors.GRAY;
+    private boolean awaitingGoblinMacroKey = false;
 
     public CHRCScreen(Screen parent) {
         super(Component.literal("Crystal Hollow Route Checker"));
@@ -69,12 +74,16 @@ public final class CHRCScreen extends Screen {
             case ROUTE -> initRoute(left, panelWidth);
             case HUD -> initHud(left, panelWidth);
             case FREECAM -> initFreecam(left, panelWidth);
+            case MESSAGES -> initMessages(left, panelWidth);
+            case GOBLIN -> initGoblin(left, panelWidth);
             case RESULTS -> initResults(left, panelWidth);
         }
 
         addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, button -> onClose())
                 .pos(left + 8, height - 36).size(100, 20).build());
         addRenderableWidget(Button.builder(Component.literal("Reset Settings"), button -> {
+                    GoblinKnockbackManager.onDisabled(minecraft);
+                    awaitingGoblinMacroKey = false;
                     ConfigManager.reset();
                     ScanManager.reset();
                     statusMessage = "Settings reset. Ruby is selected by default.";
@@ -413,6 +422,138 @@ public final class CHRCScreen extends Screen {
         return text;
     }
 
+    private void initMessages(int left, int panelWidth) {
+        int contentLeft = left + 22;
+        int top = HEADER_HEIGHT + 18;
+
+        addRenderableOnly((graphics, mouseX, mouseY, delta) -> {
+            graphics.text(font, Component.literal("Mining Messages").withStyle(ChatFormatting.BOLD), contentLeft, top, CommonColors.WHITE);
+            graphics.text(font, Component.literal("Optional filters and center-screen alerts for mining ability messages."), contentLeft, top + 18, CommonColors.GRAY);
+
+            graphics.text(font, Component.literal("Hides: PRISTINE! You found ..."), contentLeft + 24, top + 58, CommonColors.GRAY);
+            graphics.text(font, Component.literal("Hides: You used your ... Pickaxe Ability!"), contentLeft + 24, top + 98, CommonColors.GRAY);
+            graphics.text(font, Component.literal("Hides: Your ... has expired!"), contentLeft + 24, top + 138, CommonColors.GRAY);
+
+            graphics.text(font, Component.literal("Center-screen ability status:"), contentLeft + 24, top + 178, CommonColors.GRAY);
+            graphics.text(font, Component.literal("Your ability is now available").withStyle(ChatFormatting.GREEN), contentLeft + 48, top + 194, CommonColors.WHITE);
+            graphics.text(font, Component.literal("Your ability has expired").withStyle(ChatFormatting.RED), contentLeft + 48, top + 210, CommonColors.WHITE);
+            graphics.text(font, Component.literal("All options are OFF by default."), contentLeft, top + 238, 0xFF555555);
+        });
+
+        addRenderableWidget(Checkbox.builder(Component.literal("Hide PRISTINE messages"), font)
+                .selected(ConfigManager.get().hidePristineMessages)
+                .onValueChange((checkbox, checked) -> {
+                    ConfigManager.get().hidePristineMessages = checked;
+                    ConfigManager.save();
+                })
+                .pos(contentLeft, top + 38)
+                .build());
+
+        addRenderableWidget(Checkbox.builder(Component.literal("Hide Pickaxe Ability used message"), font)
+                .selected(ConfigManager.get().hidePickaxeAbilityUsedMessages)
+                .onValueChange((checkbox, checked) -> {
+                    ConfigManager.get().hidePickaxeAbilityUsedMessages = checked;
+                    ConfigManager.save();
+                })
+                .pos(contentLeft, top + 78)
+                .build());
+
+        addRenderableWidget(Checkbox.builder(Component.literal("Hide ability expired message"), font)
+                .selected(ConfigManager.get().hideAbilityExpiredMessages)
+                .onValueChange((checkbox, checked) -> {
+                    ConfigManager.get().hideAbilityExpiredMessages = checked;
+                    ConfigManager.save();
+                })
+                .pos(contentLeft, top + 118)
+                .build());
+
+        addRenderableWidget(Checkbox.builder(Component.literal("Show ability available / expired in center"), font)
+                .selected(ConfigManager.get().showAbilityStatusTitles)
+                .onValueChange((checkbox, checked) -> {
+                    ConfigManager.get().showAbilityStatusTitles = checked;
+                    ConfigManager.save();
+                })
+                .pos(contentLeft, top + 158)
+                .build());
+    }
+
+    private void initGoblin(int left, int panelWidth) {
+        int contentLeft = left + 22;
+        int top = HEADER_HEIGHT + 18;
+
+        addRenderableOnly((graphics, mouseX, mouseY, delta) -> {
+            graphics.text(font, Component.literal("Goblin Knockback").withStyle(ChatFormatting.BOLD), contentLeft, top, CommonColors.WHITE);
+            graphics.text(font, Component.literal("Only works when the Hypixel tab list contains Area: Crystal Hollows."), contentLeft, top + 18, CommonColors.GRAY);
+            graphics.text(font, Component.literal("Checks every 5 ticks for any mob occupying your current block."), contentLeft, top + 34, CommonColors.GRAY);
+
+            if (ConfigManager.get().goblinKnockbackEnabled) {
+                graphics.text(font, Component.literal("Macro toggle key"), contentLeft, top + 88, CommonColors.LIGHT_GRAY);
+                graphics.text(font, Component.literal("When triggered: toggle macro off → 2 attack clicks (180–220 ms apart) → recheck."), contentLeft, top + 126, CommonColors.GRAY);
+                graphics.text(font, Component.literal("If the mob is gone, the macro toggle key is pressed once to resume."), contentLeft, top + 142, CommonColors.GRAY);
+            } else {
+                graphics.text(font, Component.literal("OFF by default. Macro key is Not Bound by default."), contentLeft, top + 88, CommonColors.GRAY);
+            }
+        });
+
+        addRenderableWidget(Checkbox.builder(Component.literal("Goblin Knockback"), font)
+                .selected(ConfigManager.get().goblinKnockbackEnabled)
+                .onValueChange((checkbox, checked) -> {
+                    if (!checked) {
+                        GoblinKnockbackManager.onDisabled(minecraft);
+                        awaitingGoblinMacroKey = false;
+                    }
+                    ConfigManager.get().goblinKnockbackEnabled = checked;
+                    ConfigManager.save();
+                    minecraft.execute(this::rebuildWidgets);
+                })
+                .pos(contentLeft, top + 58)
+                .build());
+
+        // The macro-key selector is intentionally hidden until Goblin Knockback is enabled.
+        if (ConfigManager.get().goblinKnockbackEnabled) {
+            String keyText = awaitingGoblinMacroKey ? "Press a key..." : goblinMacroKeyDisplayName();
+            addRenderableWidget(Button.builder(Component.literal(keyText), button -> {
+                        awaitingGoblinMacroKey = true;
+                        rebuildWidgets();
+                    })
+                    .pos(contentLeft + 120, top + 82).size(150, 20).build());
+
+            addRenderableWidget(Button.builder(Component.literal("Clear"), button -> {
+                        ConfigManager.get().goblinKnockbackMacroKey = GLFW.GLFW_KEY_UNKNOWN;
+                        ConfigManager.save();
+                        awaitingGoblinMacroKey = false;
+                        rebuildWidgets();
+                    })
+                    .pos(contentLeft + 278, top + 82).size(70, 20).build());
+        }
+    }
+
+    private String goblinMacroKeyDisplayName() {
+        int keyCode = ConfigManager.get().goblinKnockbackMacroKey;
+        if (keyCode == GLFW.GLFW_KEY_UNKNOWN) return "Not Bound";
+        InputConstants.Key key = InputConstants.Type.KEYSYM.getOrCreate(keyCode);
+        return key == InputConstants.UNKNOWN ? "Not Bound" : key.getDisplayName().getString();
+    }
+
+    @Override
+    public boolean keyPressed(KeyEvent input) {
+        if (awaitingGoblinMacroKey) {
+            awaitingGoblinMacroKey = false;
+            if (input.key() == GLFW.GLFW_KEY_ESCAPE) {
+                ConfigManager.get().goblinKnockbackMacroKey = GLFW.GLFW_KEY_UNKNOWN;
+                statusMessage = "Goblin Knockback macro key cleared.";
+            } else if (input.key() != GLFW.GLFW_KEY_UNKNOWN) {
+                ConfigManager.get().goblinKnockbackMacroKey = input.key();
+                statusMessage = "Goblin Knockback macro key set.";
+            }
+            statusColor = CommonColors.LIGHT_GRAY;
+            ConfigManager.save();
+            rebuildWidgets();
+            return true;
+        }
+        return super.keyPressed(input);
+    }
+
     private void initResults(int left, int panelWidth) {
         int contentLeft = left + 18;
         int top = HEADER_HEIGHT + 14;
@@ -483,6 +624,8 @@ public final class CHRCScreen extends Screen {
         ROUTE("Route"),
         HUD("HUD"),
         FREECAM("Freecam"),
+        MESSAGES("Messages"),
+        GOBLIN("Goblin"),
         RESULTS("Results");
 
         private final String label;

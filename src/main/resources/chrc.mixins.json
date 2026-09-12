@@ -10,7 +10,8 @@
     "FreecamLocalPlayerMixin",
     "FreecamMouseHandlerMixin",
     "FreecamMinecraftInteractionMixin",
-    "FreecamGameRendererMixin"
+    "FreecamGameRendererMixin",
+    "MiningChatMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -12,6 +12,18 @@ public final class ChrcConfig {
 
     // Detached-camera movement speed in blocks per client tick.
     public float freecamSpeed = 0.45f;
+
+    // Chat / mining ability notifications. All are opt-in and disabled by default.
+    public boolean hidePristineMessages = false;
+    public boolean hidePickaxeAbilityUsedMessages = false;
+    public boolean hideAbilityExpiredMessages = false;
+    public boolean showAbilityStatusTitles = false;
+
+    // Crystal Hollows goblin knockback helper. Disabled and unbound by default.
+    public boolean goblinKnockbackEnabled = false;
+    // GLFW keyboard key code; -1 is GLFW_KEY_UNKNOWN / Not Bound.
+    public int goblinKnockbackMacroKey = -1;
+
     public List<GemstoneType> selectedGemstones = new ArrayList<>(List.of(GemstoneType.RUBY));
 
     // In-game table that shows route waypoints whose center chunk is not loaded yet.
@@ -27,6 +39,7 @@ public final class ChrcConfig {
         structureScanRadius = Math.clamp(structureScanRadius, 1, 10);
         if (!Float.isFinite(freecamSpeed)) freecamSpeed = 0.45f;
         freecamSpeed = Math.clamp(freecamSpeed, 0.05f, 5.0f);
+        if (goblinKnockbackMacroKey < -1 || goblinKnockbackMacroKey > 348) goblinKnockbackMacroKey = -1;
         if (selectedGemstones == null) selectedGemstones = new ArrayList<>();
         selectedGemstones = new ArrayList<>(new LinkedHashSet<>(selectedGemstones));
         if (selectedGemstones.isEmpty()) selectedGemstones.add(GemstoneType.RUBY);

@@ -1,5 +1,6 @@
 package dev.chrc;
 
+import dev.chrc.automation.GoblinKnockbackManager;
 import dev.chrc.config.ConfigManager;
 import dev.chrc.gui.CHRCScreen;
 import dev.chrc.freecam.FreecamManager;
@@ -82,12 +83,14 @@ public final class CHRCClient implements ClientModInitializer {
 
         ClientTickEvents.END_CLIENT_TICK.register(ChrcKeyBindings::tick);
         ClientTickEvents.END_CLIENT_TICK.register(FreecamManager::tick);
+        ClientTickEvents.END_CLIENT_TICK.register(GoblinKnockbackManager::tick);
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             // Sync the visible target before the scanner can complete it in this tick.
             CurrentTargetWaypointRenderer.tick(client);
             ScanManager.tick(client);
         });
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+            GoblinKnockbackManager.onDisabled(client);
             FreecamManager.disableSilently(client);
             ConfigManager.save();
             RouteManager.save();
