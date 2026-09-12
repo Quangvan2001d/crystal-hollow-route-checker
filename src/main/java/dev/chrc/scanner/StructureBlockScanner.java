@@ -69,6 +69,13 @@ public final class StructureBlockScanner {
             Blocks.POLISHED_GRANITE_SLAB,
             Blocks.POLISHED_GRANITE_STAIRS,
 
+            // Additional Crystal Hollows structure materials.
+            Blocks.GRAVEL,
+            Blocks.DIRT,
+            Blocks.POPPY,
+            Blocks.GRAY_WOOL,
+            Blocks.LIGHT_GRAY_WOOL,
+
             Blocks.OAK_PLANKS,
             Blocks.SPRUCE_PLANKS,
             Blocks.BIRCH_PLANKS,
@@ -99,6 +106,44 @@ public final class StructureBlockScanner {
             Blocks.BLAST_FURNACE
     );
 
+    /**
+     * Extra structure block ids kept as strings so the checker remains tolerant
+     * of mapping/version differences for decorative Crystal Hollows blocks.
+     *
+     * Leaves are handled separately by the *_leaves suffix below.
+     */
+    private static final Set<String> ADDITIONAL_STRUCTURE_BLOCK_IDS = Set.of(
+            // Vegetation seen inside structures.
+            "grass_block",
+            "short_grass",
+            "tall_grass",
+
+            // Dark smooth/decorative blocks used by Crystal Hollows structures.
+            "gray_concrete",
+            "black_concrete",
+            "gray_terracotta",
+            "black_terracotta",
+            "cyan_terracotta",
+            "black_wool",
+
+            // Dark stone families.
+            "deepslate",
+            "cobbled_deepslate",
+            "polished_deepslate",
+            "deepslate_bricks",
+            "cracked_deepslate_bricks",
+            "deepslate_tiles",
+            "cracked_deepslate_tiles",
+            "chiseled_deepslate",
+            "blackstone",
+            "gilded_blackstone",
+            "polished_blackstone",
+            "polished_blackstone_bricks",
+            "cracked_polished_blackstone_bricks",
+            "chiseled_polished_blackstone",
+            "smooth_basalt"
+    );
+
     private StructureBlockScanner() {}
 
     /**
@@ -122,7 +167,7 @@ public final class StructureBlockScanner {
 
                     pos.set(x, y, z);
                     BlockState state = level.getBlockState(pos);
-                    if (STRUCTURE_BLOCKS.contains(state.getBlock())) {
+                    if (isStructureBlock(state)) {
                         detections.add(new Detection(pos.immutable(), state));
                     }
                 }
@@ -130,6 +175,18 @@ public final class StructureBlockScanner {
         }
 
         return detections;
+    }
+
+    private static boolean isStructureBlock(BlockState state) {
+        if (STRUCTURE_BLOCKS.contains(state.getBlock())) return true;
+
+        String id = readableBlockName(state);
+
+        // Covers oak/spruce/birch/jungle/acacia/dark-oak/mangrove/cherry/etc.
+        // without needing a version-specific constant for every leaf type.
+        if (id.endsWith("_leaves")) return true;
+
+        return ADDITIONAL_STRUCTURE_BLOCK_IDS.contains(id);
     }
 
     /** Stable, readable name for latest.log/console without registry reflection. */
