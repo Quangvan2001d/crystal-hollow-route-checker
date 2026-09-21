@@ -1,5 +1,6 @@
 package dev.chrc.mixin;
 
+import dev.chrc.automation.GoblinKnockbackManager;
 import dev.chrc.notifications.MiningMessageManager;
 import net.minecraft.client.gui.components.ChatComponent;
 import net.minecraft.client.multiplayer.chat.GuiMessageSource;
@@ -25,6 +26,10 @@ public final class MiningChatMixin {
             GuiMessageTag tag,
             CallbackInfo ci
     ) {
+        // GoblinKnockbackManager must see Polinex status lines even when another
+        // CHRC chat rule later decides to hide a message from the chat HUD.
+        GoblinKnockbackManager.onChatMessage(message);
+
         if (MiningMessageManager.handleAndShouldHide(message)) {
             ci.cancel();
         }

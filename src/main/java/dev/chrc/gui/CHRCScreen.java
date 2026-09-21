@@ -482,20 +482,21 @@ public final class CHRCScreen extends Screen {
         int top = HEADER_HEIGHT + 18;
 
         addRenderableOnly((graphics, mouseX, mouseY, delta) -> {
-            graphics.text(font, Component.literal("Goblin Knockback").withStyle(ChatFormatting.BOLD), contentLeft, top, CommonColors.WHITE);
-            graphics.text(font, Component.literal("Only works when the Hypixel tab list contains Area: Crystal Hollows."), contentLeft, top + 18, CommonColors.GRAY);
-            graphics.text(font, Component.literal("Checks every 5 ticks for any mob occupying your current block."), contentLeft, top + 34, CommonColors.GRAY);
+            graphics.text(font, Component.literal("Goblin Knockback — Polinex only").withStyle(ChatFormatting.BOLD), contentLeft, top, CommonColors.WHITE);
+            graphics.text(font, Component.literal("Supports Polinex Gemstone Macro only."), contentLeft, top + 18, CommonColors.GRAY);
+            graphics.text(font, Component.literal("Only works when the Hypixel tab list contains Area: Crystal Hollows."), contentLeft, top + 34, CommonColors.GRAY);
+            graphics.text(font, Component.literal("Checks every 5 ticks for a hittable entity overlapping your position."), contentLeft, top + 50, CommonColors.GRAY);
 
             if (ConfigManager.get().goblinKnockbackEnabled) {
-                graphics.text(font, Component.literal("Macro toggle key"), contentLeft, top + 88, CommonColors.LIGHT_GRAY);
-                graphics.text(font, Component.literal("When triggered: toggle macro off → 2 attack clicks (180–220 ms apart) → recheck."), contentLeft, top + 126, CommonColors.GRAY);
-                graphics.text(font, Component.literal("If the mob is gone, the macro toggle key is pressed once to resume."), contentLeft, top + 142, CommonColors.GRAY);
+                graphics.text(font, Component.literal("Macro toggle key"), contentLeft, top + 100, CommonColors.LIGHT_GRAY);
+                graphics.text(font, Component.literal("When triggered: toggle macro off → 2 attack clicks (180–220 ms apart) → recheck."), contentLeft, top + 138, CommonColors.GRAY);
+                graphics.text(font, Component.literal("If the mob is gone, the macro toggle key is pressed once to resume."), contentLeft, top + 154, CommonColors.GRAY);
             } else {
-                graphics.text(font, Component.literal("OFF by default. Macro key is Not Bound by default."), contentLeft, top + 88, CommonColors.GRAY);
+                graphics.text(font, Component.literal("OFF by default. Macro key is Not Bound by default."), contentLeft, top + 100, CommonColors.GRAY);
             }
         });
 
-        addRenderableWidget(Checkbox.builder(Component.literal("Goblin Knockback"), font)
+        addRenderableWidget(Checkbox.builder(Component.literal("Goblin Knockback (Polinex only)"), font)
                 .selected(ConfigManager.get().goblinKnockbackEnabled)
                 .onValueChange((checkbox, checked) -> {
                     if (!checked) {
@@ -506,7 +507,7 @@ public final class CHRCScreen extends Screen {
                     ConfigManager.save();
                     minecraft.execute(this::rebuildWidgets);
                 })
-                .pos(contentLeft, top + 58)
+                .pos(contentLeft, top + 70)
                 .build());
 
         // The macro-key selector is intentionally hidden until Goblin Knockback is enabled.
@@ -516,7 +517,7 @@ public final class CHRCScreen extends Screen {
                         awaitingGoblinMacroKey = true;
                         rebuildWidgets();
                     })
-                    .pos(contentLeft + 120, top + 82).size(150, 20).build());
+                    .pos(contentLeft + 120, top + 94).size(150, 20).build());
 
             addRenderableWidget(Button.builder(Component.literal("Clear"), button -> {
                         ConfigManager.get().goblinKnockbackMacroKey = GLFW.GLFW_KEY_UNKNOWN;
@@ -524,7 +525,7 @@ public final class CHRCScreen extends Screen {
                         awaitingGoblinMacroKey = false;
                         rebuildWidgets();
                     })
-                    .pos(contentLeft + 278, top + 82).size(70, 20).build());
+                    .pos(contentLeft + 278, top + 94).size(70, 20).build());
         }
     }
 

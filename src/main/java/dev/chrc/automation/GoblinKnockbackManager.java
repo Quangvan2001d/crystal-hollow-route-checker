@@ -16,8 +16,8 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.Mob;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -30,83 +30,202 @@ public final class GoblinKnockbackManager {
     private static final int CLICK_DELAY_MIN_MS = 180;
     private static final int CLICK_DELAY_MAX_MS = 220;
     private static final int NATIVE_KEY_HOLD_MS = 55;
+    private static final int TOGGLE_CONFIRM_TIMEOUT_TICKS = 20;
+    private static final int MAX_TOGGLE_ATTEMPTS = 3;
+
+    // Hypixel can represent a visible mob with stacked/offset entities. Do not require
+    // the target entity origin to be on the exact same Y block as the player.
+    private static final double TARGET_HORIZONTAL_PADDING = 0.25;
+    private static final double TARGET_Y_BELOW = 0.75;
+    private static final double TARGET_Y_ABOVE = 2.75;
 
     private static volatile Robot nativeKeyboardRobot;
     private static volatile boolean nativeKeyboardUnavailable;
 
     private enum State {
         IDLE,
-        PAUSING_MACRO,
+        WAITING_FOR_MACRO_PAUSE,
         ATTACK_BURST,
-        WAITING_RECHECK
+        WAITING_RECHECK,
+        WAITING_FOR_MACRO_RESUME
     }
 
     private static State state = State.IDLE;
-    private static boolean macroPausedByUs = false;
+
+    /**
+     * Live Polinex Gemstone Macro state, learned only from Polinex chat messages.
+     * true  = Enabled / [Pause] Resumed
+     * false = Disabled / [Pause] Gemstone Macro paused
+     */
+    private static volatile boolean gemstoneMacroEnabled = false;
+    private static volatile boolean gemstoneMacroStateSeen = false;
+
     private static int pausedMacroKeyCode = GLFW.GLFW_KEY_UNKNOWN;
+    private static int toggleAttempts = 0;
+    private static int toggleConfirmDeadlineTick = 0;
     private static int generation = 0;
     private static CompletableFuture<Void> pendingMacroToggle = CompletableFuture.completedFuture(null);
 
     private GoblinKnockbackManager() {}
 
+    /**
+     * Track Polinex's Gemstone Macro state from chat for the whole play session.
+     *
+     * These are the only messages that change the state:
+     *   true  <- "[Polinex] » Gemstone Macro: Enabled"
+     *            "[Polinex] » [Pause] Resumed Gemstone Macro."
+     *   false <- "[Polinex] » Gemstone Macro: Disabled"
+     *            "[Polinex] » [Pause] Gemstone Macro paused — ..."
+     */
+    public static void onChatMessage(Component message) {
+        if (message == null) return;
+
+        String lower = normalizePolinexMessage(message.getString()).toLowerCase(Locale.ROOT);
+        if (!lower.contains("[polinex]")) return;
+
+        boolean enabledMessage = lower.contains("gemstone macro: enabled");
+        boolean resumedMessage = lower.contains("[pause] resumed gemstone macro");
+        boolean disabledMessage = lower.contains("gemstone macro: disabled");
+        boolean pausedMessage = lower.contains("[pause]")
+                && lower.contains("gemstone macro paused");
+
+        if (enabledMessage || resumedMessage) {
+            gemstoneMacroEnabled = true;
+            gemstoneMacroStateSeen = true;
+        } else if (disabledMessage || pausedMessage) {
+            gemstoneMacroEnabled = false;
+            gemstoneMacroStateSeen = true;
+        }
+    }
+
     public static void tick(Minecraft client) {
         if (client == null || client.player == null || client.level == null) {
-            resetWithoutToggle();
+            resetSequenceOnly();
+            gemstoneMacroEnabled = false;
+            gemstoneMacroStateSeen = false;
             return;
         }
 
         if (!ConfigManager.get().goblinKnockbackEnabled) {
-            resumeAndReset(client);
+            resetSequenceOnly();
             return;
         }
 
         int macroKeyCode = ConfigManager.get().goblinKnockbackMacroKey;
         if (macroKeyCode == GLFW.GLFW_KEY_UNKNOWN) {
-            resumeAndReset(client);
+            resetSequenceOnly();
             return;
         }
 
         if (client.player.tickCount % CHECK_INTERVAL_TICKS != 0) return;
 
         if (!TabAreaDetector.isCrystalHollows(client)) {
-            resumeAndReset(client);
+            resetSequenceOnly();
             return;
         }
 
-        // Pause the helper while any GUI is open. This prevents config/inventory clicks
-        // from becoming combat clicks. An in-progress sequence resumes after the GUI closes.
+        // Keep tracking Polinex chat even while a GUI is open, but do not generate
+        // combat/toggle input until the GUI has closed.
         if (client.screen != null) return;
+
+        boolean mobOnPlayer = hasMobOnPlayerBlock(client);
 
         switch (state) {
             case IDLE -> {
-                if (hasMobOnPlayerBlock(client)) {
-                    pausedMacroKeyCode = macroKeyCode;
-                    macroPausedByUs = true;
-                    state = State.PAUSING_MACRO;
+                if (!mobOnPlayer) return;
 
-                    int pauseGeneration = ++generation;
-                    pendingMacroToggle = pressMacroToggleAsync(pausedMacroKeyCode);
-                    pendingMacroToggle.whenComplete((ignored, error) -> client.execute(() -> {
-                        if (generation != pauseGeneration || state != State.PAUSING_MACRO) return;
-                        if (!isSequenceStillAllowed(client)) {
-                            resumeAndReset(client);
-                            return;
-                        }
-                        startAttackBurst(client);
-                    }));
+                // Do not guess the macro state. We must have seen at least one Polinex
+                // status line in this session before Goblin Knockback is allowed to act.
+                if (!gemstoneMacroStateSeen) return;
+
+                pausedMacroKeyCode = macroKeyCode;
+                if (gemstoneMacroEnabled) {
+                    beginPauseConfirmation(client);
+                } else {
+                    // It is already paused/disabled according to Polinex, so there is no
+                    // reason to press the toggle key before attacking.
+                    startAttackBurst(client);
                 }
             }
-            case PAUSING_MACRO -> {
-                // Wait until the external/native key helper has completed before attacking.
+
+            case WAITING_FOR_MACRO_PAUSE -> {
+                if (!mobOnPlayer) {
+                    // The goblin moved away before pause confirmation arrived.
+                    if (gemstoneMacroStateSeen && !gemstoneMacroEnabled) {
+                        beginResumeConfirmation(client);
+                    } else {
+                        resetSequenceOnly();
+                    }
+                    return;
+                }
+
+                // Never attack until Polinex itself confirms the macro is no longer running.
+                if (gemstoneMacroStateSeen && !gemstoneMacroEnabled) {
+                    startAttackBurst(client);
+                    return;
+                }
+
+                if (client.player.tickCount >= toggleConfirmDeadlineTick) {
+                    if (toggleAttempts < MAX_TOGGLE_ATTEMPTS) {
+                        requestMacroToggleAttempt(client);
+                    } else {
+                        // Three key presses without a Disabled/Paused confirmation:
+                        // abort instead of attacking while the mining macro may still be on.
+                        resetSequenceOnly();
+                    }
+                }
             }
+
             case ATTACK_BURST -> {
                 // The two click pulses are time-based so their spacing stays 180-220 ms.
+                // performAttackClick() also verifies the chat-tracked macro state is false.
             }
+
             case WAITING_RECHECK -> {
-                if (hasMobOnPlayerBlock(client)) {
-                    startAttackBurst(client);
+                if (mobOnPlayer) {
+                    if (!gemstoneMacroStateSeen) {
+                        resetSequenceOnly();
+                    } else if (gemstoneMacroEnabled) {
+                        // The macro somehow resumed while the goblin is still here.
+                        // Pause it again and wait for chat confirmation before more attacks.
+                        pausedMacroKeyCode = macroKeyCode;
+                        beginPauseConfirmation(client);
+                    } else {
+                        startAttackBurst(client);
+                    }
                 } else {
-                    resumeAndReset(client);
+                    beginResumeConfirmation(client);
+                }
+            }
+
+            case WAITING_FOR_MACRO_RESUME -> {
+                // Finish only after Polinex confirms Enabled/Resumed.
+                if (gemstoneMacroStateSeen && gemstoneMacroEnabled) {
+                    resetSequenceOnly();
+                    return;
+                }
+
+                // If the goblin comes back while we are trying to resume, stop trying to
+                // resume and return to combat logic. Any attack still requires macro=false.
+                if (mobOnPlayer) {
+                    if (!gemstoneMacroStateSeen) {
+                        resetSequenceOnly();
+                    } else if (gemstoneMacroEnabled) {
+                        pausedMacroKeyCode = macroKeyCode;
+                        beginPauseConfirmation(client);
+                    } else {
+                        startAttackBurst(client);
+                    }
+                    return;
+                }
+
+                if (client.player.tickCount >= toggleConfirmDeadlineTick) {
+                    if (toggleAttempts < MAX_TOGGLE_ATTEMPTS) {
+                        requestMacroToggleAttempt(client);
+                    } else {
+                        // User requested a hard stop after at most three toggle presses.
+                        resetSequenceOnly();
+                    }
                 }
             }
         }
@@ -114,7 +233,62 @@ public final class GoblinKnockbackManager {
 
     /** Called by the settings UI when the feature is turned off or reset. */
     public static void onDisabled(Minecraft client) {
-        resumeAndReset(client);
+        // Disabling this CHRC feature means stop generating input immediately.
+        // Macro state tracking continues independently through onChatMessage().
+        resetSequenceOnly();
+    }
+
+    private static void beginPauseConfirmation(Minecraft client) {
+        state = State.WAITING_FOR_MACRO_PAUSE;
+        toggleAttempts = 0;
+        requestMacroToggleAttempt(client);
+    }
+
+    private static void beginResumeConfirmation(Minecraft client) {
+        if (!gemstoneMacroStateSeen) {
+            resetSequenceOnly();
+            return;
+        }
+
+        if (gemstoneMacroEnabled) {
+            resetSequenceOnly();
+            return;
+        }
+
+        state = State.WAITING_FOR_MACRO_RESUME;
+        toggleAttempts = 0;
+        requestMacroToggleAttempt(client);
+    }
+
+    private static void requestMacroToggleAttempt(Minecraft client) {
+        if (client == null || client.player == null) {
+            resetSequenceOnly();
+            return;
+        }
+
+        int keyCode = pausedMacroKeyCode;
+        if (keyCode == GLFW.GLFW_KEY_UNKNOWN) {
+            resetSequenceOnly();
+            return;
+        }
+
+        toggleAttempts++;
+        toggleConfirmDeadlineTick = client.player.tickCount + TOGGLE_CONFIRM_TIMEOUT_TICKS;
+
+        // Serialize native key sends so a retry cannot overlap a still-running helper process.
+        pendingMacroToggle = pendingMacroToggle
+                .handle((ignored, error) -> null)
+                .thenCompose(ignored -> pressMacroToggleAsync(keyCode));
+    }
+
+    private static String normalizePolinexMessage(String text) {
+        if (text == null) return "";
+        return text
+                .replace('\u00A0', ' ')
+                .replace('\u2014', '-')
+                .replace('\u2013', '-')
+                .trim()
+                .replaceAll("\\s+", " ");
     }
 
     private static void startAttackBurst(Minecraft client) {
@@ -134,6 +308,11 @@ public final class GoblinKnockbackManager {
 
     private static void performAttackClick(Minecraft client) {
         if (!isSequenceStillAllowed(client)) return;
+
+        // A click is allowed only while Polinex chat says the Gemstone Macro is stopped.
+        // This prevents attacking from racing ahead of the macro's own pause confirmation.
+        if (!gemstoneMacroStateSeen || gemstoneMacroEnabled) return;
+
         InputConstants.Key attackKey = ((AccessorKeyMapping) (Object) client.options.keyAttack).chrc$getKey();
         if (attackKey != null && attackKey != InputConstants.UNKNOWN) {
             KeyMapping.click(attackKey);
@@ -400,51 +579,46 @@ public final class GoblinKnockbackManager {
     }
 
     /**
-     * Treat any real Minecraft AI mob on the player's feet block as a knockback target.
-     * This deliberately does not use the entity name, so Hypixel goblins represented by
-     * vanilla mobs are still detected. Players and ArmorStand/name-tag entities are not
-     * instances of Mob and therefore do not trigger the helper.
+     * Detect an entity that can actually be targeted by an attack and is overlapping the
+     * player's horizontal space. Hypixel may build a visible Goblin from stacked/offset
+     * entities, so requiring `instanceof Mob` or an exact integer Y match is too strict.
+     *
+     * The Y window intentionally tolerates entities whose logical origin floats above the
+     * ground while their visible model/hitbox is effectively on top of the player.
      */
     private static boolean hasMobOnPlayerBlock(Minecraft client) {
-        int playerX = floor(client.player.getX());
-        int playerY = floor(client.player.getY());
-        int playerZ = floor(client.player.getZ());
+        Entity player = client.player;
+        var playerBox = player.getBoundingBox();
+
+        double minX = playerBox.minX - TARGET_HORIZONTAL_PADDING;
+        double maxX = playerBox.maxX + TARGET_HORIZONTAL_PADDING;
+        double minZ = playerBox.minZ - TARGET_HORIZONTAL_PADDING;
+        double maxZ = playerBox.maxZ + TARGET_HORIZONTAL_PADDING;
+        double playerY = player.getY();
 
         for (Entity entity : client.level.entitiesForRendering()) {
-            if (!(entity instanceof Mob mob) || !mob.isAlive()) continue;
+            if (entity == player || !entity.isAlive() || !entity.isPickable()) continue;
 
-            int entityX = floor(entity.getX());
-            int entityY = floor(entity.getY());
-            int entityZ = floor(entity.getZ());
-            if (entityX == playerX && entityY == playerY && entityZ == playerZ) {
+            var box = entity.getBoundingBox();
+            boolean overlapsHorizontally =
+                    box.maxX >= minX && box.minX <= maxX
+                            && box.maxZ >= minZ && box.minZ <= maxZ;
+            if (!overlapsHorizontally) continue;
+
+            double entityY = entity.getY();
+            if (entityY >= playerY - TARGET_Y_BELOW
+                    && entityY <= playerY + TARGET_Y_ABOVE) {
                 return true;
             }
         }
         return false;
     }
 
-    private static int floor(double value) {
-        return (int) Math.floor(value);
-    }
-
-    private static void resumeAndReset(Minecraft client) {
-        ++generation;
-        if (macroPausedByUs && client != null && client.player != null && client.level != null) {
-            int keyToResume = pausedMacroKeyCode;
-            CompletableFuture<Void> previousToggle = pendingMacroToggle;
-            pendingMacroToggle = previousToggle
-                    .handle((ignored, error) -> null)
-                    .thenCompose(ignored -> pressMacroToggleAsync(keyToResume));
-        }
-        state = State.IDLE;
-        macroPausedByUs = false;
-        pausedMacroKeyCode = GLFW.GLFW_KEY_UNKNOWN;
-    }
-
-    private static void resetWithoutToggle() {
+    private static void resetSequenceOnly() {
         ++generation;
         state = State.IDLE;
-        macroPausedByUs = false;
         pausedMacroKeyCode = GLFW.GLFW_KEY_UNKNOWN;
+        toggleAttempts = 0;
+        toggleConfirmDeadlineTick = 0;
     }
 }
