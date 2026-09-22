@@ -18,6 +18,7 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -597,7 +598,8 @@ public final class GoblinKnockbackManager {
         double playerY = player.getY();
 
         for (Entity entity : client.level.entitiesForRendering()) {
-            if (entity == player || !entity.isAlive() || !entity.isPickable()) continue;
+            // Never treat any player (local or remote) as a Goblin/mob target.
+            if (entity instanceof Player || !entity.isAlive() || !entity.isPickable()) continue;
 
             var box = entity.getBoundingBox();
             boolean overlapsHorizontally =
