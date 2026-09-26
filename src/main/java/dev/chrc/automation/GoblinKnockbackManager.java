@@ -40,6 +40,14 @@ public final class GoblinKnockbackManager {
     private static final double TARGET_Y_BELOW = 0.75;
     private static final double TARGET_Y_ABOVE = 2.75;
 
+    // Golden Goblins on Hypixel can be built from multiple stacked/custom entities.
+    // The visible/name entity can overlap the player while the actual logical hitbox is
+    // several blocks higher.  Keep a targeted fallback for entities whose displayed
+    // name contains "Goblin" instead of widening the generic mob scan for everything.
+    private static final double GOBLIN_FALLBACK_HORIZONTAL_RADIUS = 1.35;
+    private static final double GOBLIN_FALLBACK_Y_BELOW = 1.00;
+    private static final double GOBLIN_FALLBACK_Y_ABOVE = 6.00;
+
     private static volatile Robot nativeKeyboardRobot;
     private static volatile boolean nativeKeyboardUnavailable;
 
@@ -135,18 +143,16 @@ public final class GoblinKnockbackManager {
             case IDLE -> {
                 if (!mobOnPlayer) return;
 
-                // Do not guess the macro state. We must have seen at least one Polinex
-                // status line in this session before Goblin Knockback is allowed to act.
-                if (!gemstoneMacroStateSeen) return;
+                // Goblin Killer may START only while Polinex has explicitly confirmed that
+                // Gemstone Macro is currently running. If the macro is manually disabled or
+                // paused, seeing a goblin must not generate any toggle/attack input.
+                //
+                // Once we start the sequence, CHRC itself pauses the macro; the later states
+                // are therefore allowed to continue while gemstoneMacroEnabled == false.
+                if (!gemstoneMacroStateSeen || !gemstoneMacroEnabled) return;
 
                 pausedMacroKeyCode = macroKeyCode;
-                if (gemstoneMacroEnabled) {
-                    beginPauseConfirmation(client);
-                } else {
-                    // It is already paused/disabled according to Polinex, so there is no
-                    // reason to press the toggle key before attacking.
-                    startAttackBurst(client);
-                }
+                beginPauseConfirmation(client);
             }
 
             case WAITING_FOR_MACRO_PAUSE -> {
@@ -595,25 +601,78 @@ public final class GoblinKnockbackManager {
         double maxX = playerBox.maxX + TARGET_HORIZONTAL_PADDING;
         double minZ = playerBox.minZ - TARGET_HORIZONTAL_PADDING;
         double maxZ = playerBox.maxZ + TARGET_HORIZONTAL_PADDING;
-        double playerY = player.getY();
+        double minY = playerBox.minY - TARGET_Y_BELOW;
+        double maxY = playerBox.maxY + TARGET_Y_ABOVE;
 
         for (Entity entity : client.level.entitiesForRendering()) {
             // Never treat any player (local or remote) as a Goblin/mob target.
-            if (entity instanceof Player || !entity.isAlive() || !entity.isPickable()) continue;
+            if (entity instanceof Player || !entity.isAlive()) continue;
 
             var box = entity.getBoundingBox();
+
+            // Hypixel's Golden Goblin may use an ArmorStand/display/passenger for the
+            // visible model/name while the real collision/attack entity is offset above
+            // it.  Such helper entities are not guaranteed to be pickable, so detect the
+            // named Goblin first using a narrow X/Z column around the player.
+            if (isGoblinNamedEntity(entity)
+                    && isInsideGoblinFallbackColumn(playerBox, box, entity.getY())) {
+                return true;
+            }
+
+            // Generic mobs still use the stricter rule: they must be pickable and their
+            // actual bounding box must overlap the player's expanded obstruction prism.
+            // Checking AABB Y overlap is more reliable than comparing entity origins,
+            // especially for tall/offset entities.
+            if (!entity.isPickable()) continue;
+
             boolean overlapsHorizontally =
                     box.maxX >= minX && box.minX <= maxX
                             && box.maxZ >= minZ && box.minZ <= maxZ;
             if (!overlapsHorizontally) continue;
 
-            double entityY = entity.getY();
-            if (entityY >= playerY - TARGET_Y_BELOW
-                    && entityY <= playerY + TARGET_Y_ABOVE) {
-                return true;
-            }
+            boolean overlapsVertically = box.maxY >= minY && box.minY <= maxY;
+            if (overlapsVertically) return true;
         }
         return false;
+    }
+
+    private static boolean isGoblinNamedEntity(Entity entity) {
+        String name = entity.getName().getString();
+        if (name != null && name.toLowerCase(Locale.ROOT).contains("goblin")) {
+            return true;
+        }
+
+        Component customName = entity.getCustomName();
+        return customName != null
+                && customName.getString().toLowerCase(Locale.ROOT).contains("goblin");
+    }
+
+    private static boolean isInsideGoblinFallbackColumn(
+            net.minecraft.world.phys.AABB playerBox,
+            net.minecraft.world.phys.AABB entityBox,
+            double entityY) {
+        double playerCenterX = (playerBox.minX + playerBox.maxX) * 0.5;
+        double playerCenterZ = (playerBox.minZ + playerBox.maxZ) * 0.5;
+
+        // A zero/tiny marker box is common for display/name entities.  In that case its
+        // position is more useful than requiring an AABB intersection.
+        double entityCenterX = (entityBox.minX + entityBox.maxX) * 0.5;
+        double entityCenterZ = (entityBox.minZ + entityBox.maxZ) * 0.5;
+        double dx = entityCenterX - playerCenterX;
+        double dz = entityCenterZ - playerCenterZ;
+        if (dx * dx + dz * dz
+                > GOBLIN_FALLBACK_HORIZONTAL_RADIUS * GOBLIN_FALLBACK_HORIZONTAL_RADIUS) {
+            return false;
+        }
+
+        double minY = playerBox.minY - GOBLIN_FALLBACK_Y_BELOW;
+        double maxY = playerBox.maxY + GOBLIN_FALLBACK_Y_ABOVE;
+
+        boolean boxHasHeight = entityBox.maxY - entityBox.minY > 1.0e-4;
+        if (boxHasHeight) {
+            return entityBox.maxY >= minY && entityBox.minY <= maxY;
+        }
+        return entityY >= minY && entityY <= maxY;
     }
 
     private static void resetSequenceOnly() {
