@@ -34,19 +34,19 @@ public final class GoblinKnockbackManager {
     private static final int TOGGLE_CONFIRM_TIMEOUT_TICKS = 20;
     private static final int MAX_TOGGLE_ATTEMPTS = 3;
 
-    // Hypixel can represent a visible mob with stacked/offset entities. Do not require
-    // the target entity origin to be on the exact same Y block as the player.
+    // Hypixel can represent a visible mob with stacked/offset entities. Keep the X/Z
+    // obstruction check narrow, and use one shared vertical band for every candidate.
     private static final double TARGET_HORIZONTAL_PADDING = 0.25;
-    private static final double TARGET_Y_BELOW = 0.75;
-    private static final double TARGET_Y_ABOVE = 2.75;
+
+    // Vertical detection starts at the block immediately below the player's feet and
+    // extends upward for exactly four blocks. Using the entity's feet/origin Y prevents
+    // a tall mob on the floor below from being counted just because its AABB reaches up.
+    private static final double TARGET_VERTICAL_HEIGHT_BLOCKS = 4.0;
 
     // Golden Goblins on Hypixel can be built from multiple stacked/custom entities.
-    // The visible/name entity can overlap the player while the actual logical hitbox is
-    // several blocks higher.  Keep a targeted fallback for entities whose displayed
-    // name contains "Goblin" instead of widening the generic mob scan for everything.
+    // Keep a targeted fallback for entities whose displayed name contains "Goblin"
+    // instead of widening the generic mob scan for everything.
     private static final double GOBLIN_FALLBACK_HORIZONTAL_RADIUS = 1.35;
-    private static final double GOBLIN_FALLBACK_Y_BELOW = 1.00;
-    private static final double GOBLIN_FALLBACK_Y_ABOVE = 6.00;
 
     private static volatile Robot nativeKeyboardRobot;
     private static volatile boolean nativeKeyboardUnavailable;
@@ -601,8 +601,11 @@ public final class GoblinKnockbackManager {
         double maxX = playerBox.maxX + TARGET_HORIZONTAL_PADDING;
         double minZ = playerBox.minZ - TARGET_HORIZONTAL_PADDING;
         double maxZ = playerBox.maxZ + TARGET_HORIZONTAL_PADDING;
-        double minY = playerBox.minY - TARGET_Y_BELOW;
-        double maxY = playerBox.maxY + TARGET_Y_ABOVE;
+
+        // Example: player feet at Y=64.0 -> block immediately below is Y=63.
+        // Valid entity feet/origin Y is [63, 67): exactly four vertical blocks.
+        double minY = Math.floor(playerBox.minY - 0.01);
+        double maxY = minY + TARGET_VERTICAL_HEIGHT_BLOCKS;
 
         for (Entity entity : client.level.entitiesForRendering()) {
             // Never treat any player (local or remote) as a Goblin/mob target.
@@ -615,14 +618,14 @@ public final class GoblinKnockbackManager {
             // it.  Such helper entities are not guaranteed to be pickable, so detect the
             // named Goblin first using a narrow X/Z column around the player.
             if (isGoblinNamedEntity(entity)
-                    && isInsideGoblinFallbackColumn(playerBox, box, entity.getY())) {
+                    && isInsideGoblinFallbackColumn(playerBox, box, entity.getY(), minY, maxY)) {
                 return true;
             }
 
-            // Generic mobs still use the stricter rule: they must be pickable and their
-            // actual bounding box must overlap the player's expanded obstruction prism.
-            // Checking AABB Y overlap is more reliable than comparing entity origins,
-            // especially for tall/offset entities.
+            // Generic mobs still use the stricter rule: they must be pickable and overlap
+            // the player's X/Z obstruction area. Y is intentionally checked from the
+            // entity's feet/origin rather than AABB overlap so a mob one floor below
+            // cannot trigger merely because its head/hitbox reaches upward.
             if (!entity.isPickable()) continue;
 
             boolean overlapsHorizontally =
@@ -630,8 +633,8 @@ public final class GoblinKnockbackManager {
                             && box.maxZ >= minZ && box.minZ <= maxZ;
             if (!overlapsHorizontally) continue;
 
-            boolean overlapsVertically = box.maxY >= minY && box.minY <= maxY;
-            if (overlapsVertically) return true;
+            double entityY = entity.getY();
+            if (entityY >= minY && entityY < maxY) return true;
         }
         return false;
     }
@@ -650,7 +653,9 @@ public final class GoblinKnockbackManager {
     private static boolean isInsideGoblinFallbackColumn(
             net.minecraft.world.phys.AABB playerBox,
             net.minecraft.world.phys.AABB entityBox,
-            double entityY) {
+            double entityY,
+            double minY,
+            double maxY) {
         double playerCenterX = (playerBox.minX + playerBox.maxX) * 0.5;
         double playerCenterZ = (playerBox.minZ + playerBox.maxZ) * 0.5;
 
@@ -665,14 +670,10 @@ public final class GoblinKnockbackManager {
             return false;
         }
 
-        double minY = playerBox.minY - GOBLIN_FALLBACK_Y_BELOW;
-        double maxY = playerBox.maxY + GOBLIN_FALLBACK_Y_ABOVE;
-
-        boolean boxHasHeight = entityBox.maxY - entityBox.minY > 1.0e-4;
-        if (boxHasHeight) {
-            return entityBox.maxY >= minY && entityBox.minY <= maxY;
-        }
-        return entityY >= minY && entityY <= maxY;
+        // Use the same exact four-block vertical band as the generic detector.
+        // Do not use AABB Y overlap here: a helper/hitbox from the floor below can be
+        // tall enough to cross the band even though its actual origin is below it.
+        return entityY >= minY && entityY < maxY;
     }
 
     private static void resetSequenceOnly() {
