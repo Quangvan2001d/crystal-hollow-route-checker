@@ -18,6 +18,7 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.Player;
 import org.lwjgl.glfw.GLFW;
 
@@ -610,6 +611,14 @@ public final class GoblinKnockbackManager {
         for (Entity entity : client.level.entitiesForRendering()) {
             // Never treat any player (local or remote) as a Goblin/mob target.
             if (entity instanceof Player || !entity.isAlive()) continue;
+
+            // Magma Cubes and Iron Golems are intentionally ignored by Goblin Killer.
+            // They must never pause the gemstone macro or start an attack burst even
+            // when they are inside the normal four-block detection column.
+            if (entity.getType() == EntityType.MAGMA_CUBE
+                    || entity.getType() == EntityType.IRON_GOLEM) {
+                continue;
+            }
 
             var box = entity.getBoundingBox();
 
