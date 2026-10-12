@@ -37,17 +37,15 @@ public final class GoblinKnockbackManager {
 
     // Hypixel can represent a visible mob with stacked/offset entities. Keep the X/Z
     // obstruction check narrow, and use one shared vertical band for every candidate.
-    private static final double TARGET_HORIZONTAL_PADDING = 0.25;
-
     // Vertical detection starts at the block immediately below the player's feet and
     // extends upward for exactly four blocks. Using the entity's feet/origin Y prevents
     // a tall mob on the floor below from being counted just because its AABB reaches up.
     private static final double TARGET_VERTICAL_HEIGHT_BLOCKS = 4.0;
 
     // Golden Goblins on Hypixel can be built from multiple stacked/custom entities.
-    // Keep a targeted fallback for entities whose displayed name contains "Goblin"
-    // instead of widening the generic mob scan for everything.
-    private static final double GOBLIN_FALLBACK_HORIZONTAL_RADIUS = 1.35;
+    // The named-entity fallback must stay inside the player's CURRENT X/Z block.
+    // A wider radius caused a Golden Goblin landing beside the player to pause the
+    // mining macro forever because every re-check still treated it as an obstruction.
 
     private static volatile Robot nativeKeyboardRobot;
     private static volatile boolean nativeKeyboardUnavailable;
@@ -127,7 +125,9 @@ public final class GoblinKnockbackManager {
             return;
         }
 
-        if (client.player.tickCount % CHECK_INTERVAL_TICKS != 0) return;
+        // While CHRC owns a pause/attack sequence, inspect the player's block EVERY tick.
+        // Waiting for the attack burst or the 5-tick idle poll must not delay resume.
+        if (state == State.IDLE && client.player.tickCount % CHECK_INTERVAL_TICKS != 0) return;
 
         if (!TabAreaDetector.isCrystalHollows(client)) {
             resetSequenceOnly();
@@ -139,6 +139,15 @@ public final class GoblinKnockbackManager {
         if (client.screen != null) return;
 
         boolean mobOnPlayer = hasMobOnPlayerBlock(client);
+
+        // Highest priority in every active phase: when the obstruction has left the
+        // player's block, cancel pending attack clicks and resume without waiting
+        // for the burst to finish or for WAITING_RECHECK.
+        if (state != State.IDLE && !mobOnPlayer) {
+            resumeIfObstructionCleared(client);
+            // WAITING_FOR_MACRO_RESUME may still need confirmation/retry below.
+            if (state != State.WAITING_FOR_MACRO_RESUME) return;
+        }
 
         switch (state) {
             case IDLE -> {
@@ -299,7 +308,29 @@ public final class GoblinKnockbackManager {
                 .replaceAll("\\s+", " ");
     }
 
+    /** Stop outstanding clicks immediately when the target leaves the player's block. */
+    private static void resumeIfObstructionCleared(Minecraft client) {
+        if (state == State.IDLE) return;
+        if (state == State.WAITING_FOR_MACRO_RESUME) {
+            if (gemstoneMacroStateSeen && gemstoneMacroEnabled) resetSequenceOnly();
+            return;
+        }
+        ++generation; // invalidate ALL delayed attack callbacks
+        if (gemstoneMacroStateSeen && !gemstoneMacroEnabled) {
+            beginResumeConfirmation(client);
+        } else {
+            // Macro is already on, or its state is unknown: never toggle blindly.
+            resetSequenceOnly();
+        }
+    }
+
     private static void startAttackBurst(Minecraft client) {
+        // Check again immediately before entering attack state, even if the earlier
+        // tick/pause-confirmation check detected an obstruction.
+        if (!hasMobOnPlayerBlock(client)) {
+            resumeIfObstructionCleared(client);
+            return;
+        }
         state = State.ATTACK_BURST;
         int myGeneration = ++generation;
         int firstDelay = randomClickDelayMs();
@@ -317,8 +348,14 @@ public final class GoblinKnockbackManager {
     private static void performAttackClick(Minecraft client) {
         if (!isSequenceStillAllowed(client)) return;
 
-        // A click is allowed only while Polinex chat says the Gemstone Macro is stopped.
-        // This prevents attacking from racing ahead of the macro's own pause confirmation.
+        // Recheck at the exact moment each queued click is about to fire.
+        // If the goblin moved away even just after attack was activated, cancel
+        // the rest of the burst and request macro resume immediately.
+        if (!hasMobOnPlayerBlock(client)) {
+            resumeIfObstructionCleared(client);
+            return;
+        }
+        // Attack only after Polinex has confirmed the macro is paused.
         if (!gemstoneMacroStateSeen || gemstoneMacroEnabled) return;
 
         InputConstants.Key attackKey = ((AccessorKeyMapping) (Object) client.options.keyAttack).chrc$getKey();
@@ -598,14 +635,10 @@ public final class GoblinKnockbackManager {
         Entity player = client.player;
         var playerBox = player.getBoundingBox();
 
-        double minX = playerBox.minX - TARGET_HORIZONTAL_PADDING;
-        double maxX = playerBox.maxX + TARGET_HORIZONTAL_PADDING;
-        double minZ = playerBox.minZ - TARGET_HORIZONTAL_PADDING;
-        double maxZ = playerBox.maxZ + TARGET_HORIZONTAL_PADDING;
-
-        // Example: player feet at Y=64.0 -> block immediately below is Y=63.
+        // Always start exactly one full block below the block containing the player feet.
+        // Example: feet Y=64.0 or Y=64.4 -> minY=63.
         // Valid entity feet/origin Y is [63, 67): exactly four vertical blocks.
-        double minY = Math.floor(playerBox.minY - 0.01);
+        double minY = Math.floor(player.getY()) - 1;
         double maxY = minY + TARGET_VERTICAL_HEIGHT_BLOCKS;
 
         for (Entity entity : client.level.entitiesForRendering()) {
@@ -637,10 +670,14 @@ public final class GoblinKnockbackManager {
             // cannot trigger merely because its head/hitbox reaches upward.
             if (!entity.isPickable()) continue;
 
-            boolean overlapsHorizontally =
-                    box.maxX >= minX && box.minX <= maxX
-                            && box.maxZ >= minZ && box.minZ <= maxZ;
-            if (!overlapsHorizontally) continue;
+            // Being close enough for AABB/padding overlap is NOT the same as
+            // occupying the same block; adjacent mobs must not hold the macro paused.
+            double playerCenterX = (playerBox.minX + playerBox.maxX) * 0.5;
+            double playerCenterZ = (playerBox.minZ + playerBox.maxZ) * 0.5;
+            double entityCenterX = (box.minX + box.maxX) * 0.5;
+            double entityCenterZ = (box.minZ + box.maxZ) * 0.5;
+            if (Math.floor(entityCenterX) != Math.floor(playerCenterX)
+                    || Math.floor(entityCenterZ) != Math.floor(playerCenterZ)) continue;
 
             double entityY = entity.getY();
             if (entityY >= minY && entityY < maxY) return true;
@@ -672,10 +709,13 @@ public final class GoblinKnockbackManager {
         // position is more useful than requiring an AABB intersection.
         double entityCenterX = (entityBox.minX + entityBox.maxX) * 0.5;
         double entityCenterZ = (entityBox.minZ + entityBox.maxZ) * 0.5;
-        double dx = entityCenterX - playerCenterX;
-        double dz = entityCenterZ - playerCenterZ;
-        if (dx * dx + dz * dz
-                > GOBLIN_FALLBACK_HORIZONTAL_RADIUS * GOBLIN_FALLBACK_HORIZONTAL_RADIUS) {
+
+        // IMPORTANT: this is a block-column check, not a proximity-radius check.
+        // If a Golden Goblin lands in the neighbouring block, it must NOT pause the
+        // macro and, if CHRC had already paused while it was crossing the player block,
+        // the next re-check must be able to resume the macro immediately.
+        if (Math.floor(entityCenterX) != Math.floor(playerCenterX)
+                || Math.floor(entityCenterZ) != Math.floor(playerCenterZ)) {
             return false;
         }
 
