@@ -510,6 +510,17 @@ public final class CHRCScreen extends Screen {
                 .pos(contentLeft, top + 70)
                 .build());
 
+        if (ConfigManager.get().goblinKnockbackEnabled) {
+            addRenderableWidget(Checkbox.builder(Component.literal("PostMessage Only (test mode)"), font)
+                    .selected(ConfigManager.get().goblinPostMessageOnly)
+                    .onValueChange((checkbox, checked) -> {
+                        ConfigManager.get().goblinPostMessageOnly = checked;
+                        ConfigManager.save();
+                    })
+                    .pos(contentLeft, top + 184)
+                    .build());
+        }
+
         // The macro-key selector is intentionally hidden until Goblin Knockback is enabled.
         if (ConfigManager.get().goblinKnockbackEnabled) {
             String keyText = awaitingGoblinMacroKey ? "Press a key..." : goblinMacroKeyDisplayName();

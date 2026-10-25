@@ -21,6 +21,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.Player;
 import org.lwjgl.glfw.GLFW;
+import org.lwjgl.glfw.GLFWNativeWin32;
 
 /**
  * Temporarily pauses an externally-bound mining macro when a Crystal Hollows mob
@@ -292,10 +293,28 @@ public final class GoblinKnockbackManager {
         toggleAttempts++;
         toggleConfirmDeadlineTick = client.player.tickCount + TOGGLE_CONFIRM_TIMEOUT_TICKS;
 
-        // Serialize native key sends so a retry cannot overlap a still-running helper process.
+        // If Minecraft is not the foreground window, a Windows keybd_event/Robot press
+        // goes to whichever app the user alt-tabbed to instead of Polinex. Capture focus
+        // on the client thread and use Minecraft's own KeyMapping pipeline in that case.
+        // When focused, keep the external-key path that is already known to work with
+        // Polinex. This lets Goblin Knockback continue working while Minecraft is in the
+        // background without typing the macro key into Chrome/Discord/etc.
+        boolean postMessageOnly = ConfigManager.get().goblinPostMessageOnly;
+        boolean minecraftWindowFocused = !postMessageOnly && isMinecraftWindowFocused(client);
+        long win32Hwnd = 0L;
+        if (postMessageOnly && System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
+            try {
+                win32Hwnd = GLFWNativeWin32.glfwGetWin32Window(getGlfwWindowHandle(client));
+            } catch (RuntimeException | LinkageError ignored) {
+                // No fallback in PostMessage Only mode.
+            }
+        }
+        final long targetHwnd = win32Hwnd;
+
+        // Serialize toggle sends so a retry cannot overlap a still-running key press.
         pendingMacroToggle = pendingMacroToggle
                 .handle((ignored, error) -> null)
-                .thenCompose(ignored -> pressMacroToggleAsync(keyCode));
+                .thenCompose(ignored -> pressMacroToggleAsync(keyCode, minecraftWindowFocused, postMessageOnly, targetHwnd));
     }
 
     private static String normalizePolinexMessage(String text) {
@@ -386,19 +405,149 @@ public final class GoblinKnockbackManager {
         return ThreadLocalRandom.current().nextInt(CLICK_DELAY_MIN_MS, CLICK_DELAY_MAX_MS + 1);
     }
 
-    private static CompletableFuture<Void> pressMacroToggleAsync(int keyCode) {
+    private static CompletableFuture<Void> pressMacroToggleAsync(int keyCode, boolean minecraftWindowFocused, boolean postMessageOnly, long hwnd) {
         if (keyCode == GLFW.GLFW_KEY_UNKNOWN) return CompletableFuture.completedFuture(null);
+        if (postMessageOnly) {
+            // Strict testing mode: never use keybd_event, Robot, or KeyMapping as fallback.
+            return CompletableFuture.runAsync(() -> sendKeyUsingPostMessage(keyCode, hwnd));
+        }
+
+        // OS-level injected keyboard input is delivered to the foreground application.
+        // While Minecraft is unfocused, bypass the OS completely and inject the same
+        // press/click/release into Minecraft's KeyMapping system on the client thread.
+        if (!minecraftWindowFocused) {
+            return pressMacroToggleInsideMinecraftAsync(keyCode);
+        }
 
         return CompletableFuture.runAsync(() -> {
-            // On Windows, send the toggle from a separate OS process first. This avoids
-            // generating the key from inside the Minecraft/JVM process, which some macro
-            // mods intercept or suppress. The helper still uses a synthetic Win32 key
-            // event, so a macro that explicitly rejects all injected input may still ignore it.
+            // Keep the existing external Windows path while Minecraft is focused because
+            // it is the most compatible path for Polinex when the user is actively in-game.
             if (sendKeyFromExternalWindowsProcess(keyCode)) return;
 
             // Fallback for non-Windows systems or if PowerShell cannot be launched.
             pressMacroToggleInProcess(keyCode);
         });
+    }
+
+    /**
+     * Inject the configured macro key directly into Minecraft, independent of which OS
+     * window currently has focus. A real GLFW key press effectively marks the binding
+     * down and increments its click count; reproduce both so mods that poll either
+     * isDown() or consumeClick() can see the toggle.
+     */
+    private static CompletableFuture<Void> pressMacroToggleInsideMinecraftAsync(int keyCode) {
+        CompletableFuture<Void> result = new CompletableFuture<>();
+        Minecraft client = Minecraft.getInstance();
+
+        client.execute(() -> {
+            InputConstants.Key key = InputConstants.Type.KEYSYM.getOrCreate(keyCode);
+            if (key == InputConstants.UNKNOWN) {
+                result.complete(null);
+                return;
+            }
+
+            try {
+                KeyMapping.set(key, true);
+                KeyMapping.click(key);
+            } catch (RuntimeException error) {
+                result.completeExceptionally(error);
+                return;
+            }
+
+            CompletableFuture.delayedExecutor(NATIVE_KEY_HOLD_MS, TimeUnit.MILLISECONDS).execute(() ->
+                    client.execute(() -> {
+                        try {
+                            KeyMapping.set(key, false);
+                            result.complete(null);
+                        } catch (RuntimeException error) {
+                            result.completeExceptionally(error);
+                        }
+                    }));
+        });
+
+        return result;
+    }
+
+    /**
+     * Resolve GLFW window handle across Minecraft mapping revisions.
+     * Recent mappings no longer expose Window#getWindow(), so avoid a hard
+     * compile-time dependency on that accessor.
+     */
+    private static long getGlfwWindowHandle(Minecraft client) {
+        if (client == null || client.getWindow() == null) return 0L;
+        Object window = client.getWindow();
+        for (String methodName : new String[] {"getHandle", "handle", "getWindow"}) {
+            try {
+                java.lang.reflect.Method getter = window.getClass().getMethod(methodName);
+                Object result = getter.invoke(window);
+                if (result instanceof Number) return ((Number) result).longValue();
+            } catch (ReflectiveOperationException | SecurityException ignored) {
+                // Try the next known Minecraft mapping name.
+            }
+        }
+        return 0L;
+    }
+
+    private static boolean isMinecraftWindowFocused(Minecraft client) {
+        if (client == null || client.getWindow() == null) return true;
+        try {
+            long windowHandle = getGlfwWindowHandle(client);
+            return windowHandle != 0L && GLFW.glfwGetWindowAttrib(windowHandle, GLFW.GLFW_FOCUSED) == GLFW.GLFW_TRUE;
+        } catch (RuntimeException ignored) {
+            // Preserve the old, already-working focused behavior if GLFW focus detection
+            // is unexpectedly unavailable on the current platform.
+            return true;
+        }
+    }
+
+    /** Win32 HWND messages (not hardware input). Success only means messages were queued. */
+    private static boolean sendKeyUsingPostMessage(int glfwKeyCode, long hwnd) {
+        if (hwnd == 0L) return false;
+        int virtualKey = toWindowsVirtualKey(glfwKeyCode);
+        if (virtualKey < 0 || virtualKey > 255) return false;
+        String nativeMethods =
+                "[System.Runtime.InteropServices.DllImport(\"user32.dll\", SetLastError=true)] "
+                        + "public static extern bool PostMessage(System.IntPtr hWnd, uint Msg, System.UIntPtr wParam, System.IntPtr lParam); "
+                        + "[System.Runtime.InteropServices.DllImport(\"user32.dll\")] "
+                        + "public static extern uint MapVirtualKey(uint uCode, uint uMapType);";
+        String script = "$ErrorActionPreference='Stop'; "
+                + "Add-Type -MemberDefinition '" + nativeMethods + "' -Name WindowInput -Namespace CHRCNative; "
+                + "$hwnd=[System.IntPtr]::new([long]" + Long.toUnsignedString(hwnd) + "); "
+                + "$vk=[uint32]" + virtualKey + "; "
+                + "$scan=[CHRCNative.WindowInput]::MapVirtualKey($vk,0); "
+                + "$down=[System.IntPtr]::new([long]($scan -shl 16)); "
+                + "$up=[System.IntPtr]::new([long](($scan -shl 16) -bor 0xC0000001)); "
+                + "if (-not [CHRCNative.WindowInput]::PostMessage($hwnd,0x100,[System.UIntPtr]::new([uint64]$vk),$down)) { exit 2 }; "
+                + "Start-Sleep -Milliseconds " + NATIVE_KEY_HOLD_MS + "; "
+                + "if (-not [CHRCNative.WindowInput]::PostMessage($hwnd,0x101,[System.UIntPtr]::new([uint64]$vk),$up)) { exit 3 };";
+        return runHiddenPowerShell(script);
+    }
+
+    private static boolean runHiddenPowerShell(String script) {
+        Path ps1File = null;
+        Path vbsFile = null;
+        try {
+            ps1File = Files.createTempFile("chrc-postmsg-", ".ps1");
+            vbsFile = Files.createTempFile("chrc-postmsg-launcher-", ".vbs");
+            Files.writeString(ps1File, script, StandardCharsets.UTF_8);
+            String command = "\"powershell.exe\" -NoLogo -NoProfile -NonInteractive "
+                    + "-ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + ps1File.toAbsolutePath() + "\"";
+            String vbs = "Set shell = CreateObject(\"WScript.Shell\")\r\n"
+                    + "exitCode = shell.Run(\"" + command.replace("\"", "\"\"") + "\", 0, True)\r\n"
+                    + "WScript.Quit exitCode\r\n";
+            Files.writeString(vbsFile, vbs, StandardCharsets.UTF_8);
+            Process proc = new ProcessBuilder("wscript.exe", "//B", "//Nologo", vbsFile.toString())
+                    .redirectErrorStream(true).start();
+            try (var stream = proc.getInputStream()) {
+                stream.transferTo(java.io.OutputStream.nullOutputStream());
+            }
+            return proc.waitFor() == 0;
+        } catch (Exception ignored) {
+            return false;
+        } finally {
+            if (vbsFile != null) try { Files.deleteIfExists(vbsFile); } catch (Exception ignored) {}
+            if (ps1File != null) try { Files.deleteIfExists(ps1File); } catch (Exception ignored) {}
+        }
     }
 
     private static boolean sendKeyFromExternalWindowsProcess(int glfwKeyCode) {

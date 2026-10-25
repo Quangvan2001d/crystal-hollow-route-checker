@@ -21,6 +21,8 @@ public final class ChrcConfig {
 
     // Crystal Hollows goblin knockback helper. Disabled and unbound by default.
     public boolean goblinKnockbackEnabled = false;
+    // Test option: send the Polinex toggle solely with Windows PostMessage.
+    public boolean goblinPostMessageOnly = false;
     // GLFW keyboard key code; -1 is GLFW_KEY_UNKNOWN / Not Bound.
     public int goblinKnockbackMacroKey = -1;
 
