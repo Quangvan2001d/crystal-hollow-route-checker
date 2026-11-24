@@ -10,16 +10,14 @@ allprojects {
     }
 }
 
-// Copy built mod jars from all subprojects to root build/libs
-tasks.register('collectJars', Copy) {
+// Tự động đồng bộ (Sync) file jar vừa build của các subproject về thư mục root build/libs
+// Sync sẽ tự động xóa sạch các file jar của version cũ trong build/libs
+tasks.register('collectJars', Sync) {
     into layout.buildDirectory.dir("libs")
     
     subprojects.each { subproject ->
-        dependsOn subproject.tasks.matching { t -> t.name == 'jar' || t.name == 'remapJar' }
-        from(subproject.layout.buildDirectory.dir("libs")) {
-            include "*.jar"
-            exclude "*-dev.jar", "*-sources.jar"
-        }
+        dependsOn subproject.tasks.matching { t -> t.name == 'jar' }
+        from(subproject.tasks.matching { t -> t.name == 'jar' })
     }
 }
 
